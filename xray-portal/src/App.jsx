@@ -624,6 +624,41 @@ export default function App() {
     setSel(p=>{ const n=new Set(p); n.delete(key); return n; });
   };
 
+  // Upload all files (shared + per-section) to a Jira issue
+  const uploadFiles = async (issueKey) => {
+    const allFiles = [
+      ...sharedFiles,
+      ...Object.values(sectionFiles).flat(),
+    ];
+    if(allFiles.length === 0) return;
+    addLog("log-accent", `Uploading ${allFiles.length} file(s) to ${issueKey}…`);
+    for(const f of allFiles) {
+      try {
+        const fd = new FormData();
+        fd.append("issueKey", issueKey);
+        fd.append("file", f.file, f.name);
+        const r = await fetch(
+          `${cfg.proxyUrl}/api/attachment?ngrok-skip-browser-warning=true`,
+          {
+            method: "POST",
+            headers: {
+              "x-jira-email": creds.email,
+              "x-jira-token": creds.token,
+              "ngrok-skip-browser-warning": "true",
+              "X-Atlassian-Token": "no-check",
+            },
+            body: fd,
+          }
+        );
+        const d = await r.json();
+        if(!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+        addLog("log-ok", `  ✓ Attached: ${f.name}`);
+      } catch(e) {
+        addLog("log-warn", `  ⚠ Failed to attach ${f.name}: ${e.message}`);
+      }
+    }
+  };
+
   const handleCreate=async()=>{
     const name=execName.trim()||`[Test Execution] Bundle — ${new Date().toLocaleDateString()}`;
     const linked=linkedIssue.trim().toUpperCase();
@@ -658,6 +693,8 @@ export default function App() {
           await apiPost("/api/link",{inwardKey:linked,outwardKey:editExecKey,linkType:"Relates"},creds,cfg);
           addLog("log-ok",`✓ ${linked} relates to ${editExecKey}`);
         }
+        // Upload attachments
+        await uploadFiles(editExecKey);
         setProg(100);
         setResult({
           execKey:editExecKey,
@@ -705,6 +742,8 @@ export default function App() {
           await apiPost("/api/link",{inwardKey:linked,outwardKey:execRes.execKey,linkType:"Relates"},creds,cfg);
           addLog("log-ok",`✓ ${linked} relates to ${execRes.execKey}`);
         }
+        // Upload attachments
+        await uploadFiles(execRes.execKey);
         setProg(100);
         setResult({...execRes,issueKey:linked||null,reportText});
         setPhase("done");setTab("result");
@@ -1135,7 +1174,7 @@ export default function App() {
                     ))}
                   </div>
                 )}
-                <p style={{fontSize:12,color:"var(--text3)",marginTop:8}}>ℹ Files are staged here — actual upload to Jira is not yet implemented in this version.</p>
+                <p style={{fontSize:12,color:"var(--text3)",marginTop:8}}>ℹ Files will be attached to the test execution ticket in Jira when you click Save/Create.</p>
               </div>
             </div>
 
