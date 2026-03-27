@@ -12,6 +12,7 @@ const DEFAULT_CONFIG = {
 const SHELLY_LOGO   = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/shelly.png";
 const STORAGE_CREDS = "iot_studio_creds";
 const STORAGE_CFG   = "iot_studio_config";
+const STORAGE_CATS  = "iot_studio_categories";
 
 // Transition IDs from "Open" state (confirmed via Jira API)
 const STATUS_TRANSITION = {
@@ -109,7 +110,7 @@ function saveStored(k,v) { try { localStorage.setItem(k,JSON.stringify(v)); } ca
 function clearStored(k)  { try { localStorage.removeItem(k); } catch{} }
 function statusInfo(val) { return TEST_STATUSES.find(s=>s.value===val)||TEST_STATUSES[0]; }
 
-function buildReport(conclusion, remarks, dutData, testMeta, chosen) {
+function buildReport(conclusion, remarks, dutData, testMeta, chosen, otaSections) {
   try {
     const conclusionLabel = CONCLUSIONS.find(c=>c.value===conclusion)?.label || conclusion;
     const features = [...new Set((chosen||[]).map(t=>t.feature||"General"))];
@@ -129,6 +130,22 @@ function buildReport(conclusion, remarks, dutData, testMeta, chosen) {
       byFeature[feat].push(`  ${t.summary}: ${statusStr}${reason}`);
     });
     const testSection = features.map(f=>`${f}:\n${(byFeature[f]||[]).join("\n")}`).join("\n\n");
+
+    const ota = otaSections || {};
+    const selfTestSection = `🔬 OTA Self-Test Results
+------------------------------------------
+✅ Passed:
+${ota.selfTestPassed||"(no notes)"}
+
+❌ Failed:
+${ota.selfTestFailed||"(no notes)"}
+
+⚠️ Unprovisioned:
+${ota.selfTestUnprovisioned||"(no notes)"}
+
+📦 OTA:
+${ota.ota||"(no notes)"}`;
+
     return `TEST REPORT
 ==========================================
 
@@ -142,6 +159,8 @@ ${remarks||"No remarks"}
 
 ${testSection||"(no tests selected)"}
 
+${selfTestSection}
+
 🧠 DUT Data
 ${dutData||"No DUT data provided"}`;
   } catch(e) {
@@ -150,7 +169,7 @@ ${dutData||"No DUT data provided"}`;
 }
 
 async function apiGet(path, creds, cfg) {
-  const r = await fetch(`${cfg.proxyUrl}${path}`, {
+  const r = await fetch(`${cfg.proxyUrl}${path}${path.includes("?") ? "&" : "?"}ngrok-skip-browser-warning=true`, {
     headers: { "x-jira-email": creds.email, "x-jira-token": creds.token, "ngrok-skip-browser-warning": "true" }
   });
   const d = await r.json();
@@ -158,7 +177,7 @@ async function apiGet(path, creds, cfg) {
   return d;
 }
 async function apiPost(path, body, creds, cfg) {
-  const r = await fetch(`${cfg.proxyUrl}${path}`, {
+  const r = await fetch(`${cfg.proxyUrl}${path}${path.includes("?") ? "&" : "?"}ngrok-skip-browser-warning=true`, {
     method:"POST",
     headers:{"Content-Type":"application/json","x-jira-email":creds.email,"x-jira-token":creds.token,"ngrok-skip-browser-warning":"true"},
     body:JSON.stringify(body)
@@ -169,9 +188,30 @@ async function apiPost(path, body, creds, cfg) {
 }
 
 /* ── SETTINGS MODAL ── */
-function SettingsModal({ cfg, onSave, onClose }) {
+function SettingsModal({ cfg, creds, onSave, onClose, onReloadTests }) {
   const [form, setForm] = useState({...cfg});
+  const [reloading, setReloading] = useState(false);
+  const [reloadMsg, setReloadMsg] = useState("");
   const set = (k,v)=>setForm(p=>({...p,[k]:v}));
+
+  const handleReload = async () => {
+    if(!form.templateKey.trim()) return;
+    setReloading(true); setReloadMsg("");
+    try {
+      const tempCfg = {...form};
+      const r = await fetch(`${tempCfg.proxyUrl}/api/issue/${form.templateKey.trim()}/subtasks?ngrok-skip-browser-warning=true`, {
+        headers: { "x-jira-email": creds.email, "x-jira-token": creds.token, "ngrok-skip-browser-warning": "true" }
+      });
+      const d = await r.json();
+      if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
+      onReloadTests(d.tests||[], form.templateKey.trim());
+      setReloadMsg(`✓ Loaded ${(d.tests||[]).length} tests from ${form.templateKey.trim()}`);
+    } catch(e) {
+      setReloadMsg(`⚠ ${e.message}`);
+    }
+    setReloading(false);
+  };
+
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal-box fade-in">
@@ -180,7 +220,16 @@ function SettingsModal({ cfg, onSave, onClose }) {
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
         <div className="modal-body">
-          <div className="field-group"><label className="field-label">Template key</label><input className="field-input" value={form.templateKey} onChange={e=>set("templateKey",e.target.value)} placeholder="QAT-118"/></div>
+          <div className="field-group">
+            <label className="field-label">Template key</label>
+            <div style={{display:"flex",gap:8}}>
+              <input className="field-input" style={{flex:1}} value={form.templateKey} onChange={e=>set("templateKey",e.target.value.toUpperCase())} placeholder="QAT-118"/>
+              <button className="btn btn-secondary btn-sm" style={{flexShrink:0}} disabled={reloading||!form.templateKey.trim()} onClick={handleReload}>
+                {reloading?<><span className="spin spin-dark"/>Loading…</>:"🔄 Load tests"}
+              </button>
+            </div>
+            {reloadMsg&&<p className="settings-note" style={{color:reloadMsg.startsWith("✓")?"var(--green)":"var(--red)"}}>{reloadMsg}</p>}
+          </div>
           <div className="field-group"><label className="field-label">Project key</label><input className="field-input" value={form.projectKey} onChange={e=>set("projectKey",e.target.value)} placeholder="QAT"/></div>
           <div className="field-group"><label className="field-label">Proxy URL</label><input className="field-input" value={form.proxyUrl} onChange={e=>set("proxyUrl",e.target.value)}/></div>
           <div className="field-grid-2">
@@ -200,21 +249,26 @@ function SettingsModal({ cfg, onSave, onClose }) {
 }
 
 /* ── ADD CUSTOM TEST MODAL ── */
-function AddTestModal({ onAdd, onClose, projectKey }) {
+function AddTestModal({ onAdd, onClose, projectKey, extraCategories, onSaveCategory }) {
   const [summary, setSummary]    = useState("");
   const [feature, setFeature]    = useState("General");
   const [addToTemplate, setAddToTemplate] = useState(false);
-  const features = [...new Set(ALL_TESTS.map(t=>t.feature))];
+  const builtInFeatures = [...new Set(ALL_TESTS.map(t=>t.feature))];
+  const allFeatures = [...new Set([...builtInFeatures, ...(extraCategories||[])])];
   const [customFeat, setCustomFeat] = useState("");
 
   const effectiveFeat = feature === "__custom__" ? customFeat : feature;
 
   const submit = () => {
     if(!summary.trim()) return;
+    const finalFeat = effectiveFeat || "General";
+    if(feature === "__custom__" && customFeat.trim() && !builtInFeatures.includes(customFeat.trim())) {
+      onSaveCategory && onSaveCategory(customFeat.trim());
+    }
     onAdd({
       key: `CUSTOM-${Date.now()}`,
       summary: summary.trim(),
-      feature: effectiveFeat || "General",
+      feature: finalFeat,
       isCustom: true,
       addToTemplate,
     });
@@ -236,7 +290,7 @@ function AddTestModal({ onAdd, onClose, projectKey }) {
           <div className="field-group">
             <label className="field-label">Feature / category</label>
             <select className="field-input" value={feature} onChange={e=>setFeature(e.target.value)}>
-              {features.map(f=><option key={f} value={f}>{f}</option>)}
+              {allFeatures.map(f=><option key={f} value={f}>{f}</option>)}
               <option value="__custom__">+ Custom category…</option>
             </select>
           </div>
@@ -277,7 +331,7 @@ function LoginScreen({ onLogin }) {
   useEffect(()=>{
     let cancelled=false;
     const slow=setTimeout(()=>{ if(!cancelled){setProxyState("slow");setProxyMsg("Proxy is starting up — can take ~30s…");} },5000);
-    fetch(`${cfg.proxyUrl}/health`, { headers: { "ngrok-skip-browser-warning": "true" } })
+    fetch(`${cfg.proxyUrl}/health?ngrok-skip-browser-warning=true`, { headers: { "ngrok-skip-browser-warning": "true" } })
       .then(r=>r.ok?r.json():Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(d=>{ if(cancelled)return; clearTimeout(slow); setProxyState(d.ok?"ok":"down"); setProxyMsg(d.ok?"Proxy is ready":"Proxy returned unexpected response."); })
       .catch(ex=>{ if(cancelled)return; clearTimeout(slow); setProxyState("down"); setProxyMsg(`Cannot reach proxy — ${ex.message}`); });
@@ -363,6 +417,25 @@ export default function App() {
   const [featF,setFeatF]       = useState(null);
   const [srch,setSrch]         = useState("");
   const [customTests,setCustomTests] = useState([]);   // user-added tests
+  const [templateTests,setTemplateTests] = useState(ALL_TESTS);  // loaded from template epic
+  const [extraCategories,setExtraCategories] = useState(()=>loadStored(STORAGE_CATS)||[]);
+  const saveCategory = (cat) => {
+    setExtraCategories(p=>{
+      if(p.includes(cat)) return p;
+      const next=[...p,cat];
+      saveStored(STORAGE_CATS,next);
+      return next;
+    });
+  };
+  const handleReloadTests = (tests, templateKey) => {
+    const mapped = tests.map(t=>({
+      key: t.key,
+      summary: t.summary,
+      feature: t.feature || "General",
+    }));
+    setTemplateTests(mapped);
+    setSel(new Set());
+  };
   // Descriptions fetched from Jira {key: string|null}
   const [descriptions,setDescriptions] = useState({});
   const [expandedDesc,setExpandedDesc] = useState(new Set());
@@ -385,6 +458,22 @@ export default function App() {
   const [remarks,setRemarks]      = useState("");
   const [dutData,setDutData]      = useState("");
   const [linkedIssue,setLinkedIssue] = useState("");
+  const [otaSections,setOtaSections] = useState({selfTestPassed:"",selfTestFailed:"",selfTestUnprovisioned:"",ota:""});
+  const [sharedFiles,setSharedFiles] = useState([]);
+  const [sectionFiles,setSectionFiles] = useState({selfTestPassed:[],selfTestFailed:[],selfTestUnprovisioned:[],ota:[]});
+  const setOta = (k,v) => setOtaSections(p=>({...p,[k]:v}));
+  const addSharedFile = (e) => {
+    const files = Array.from(e.target.files||[]);
+    setSharedFiles(p=>[...p,...files.map(f=>({file:f,name:f.name,size:f.size}))]);
+    e.target.value="";
+  };
+  const removeSharedFile = (i) => setSharedFiles(p=>p.filter((_,idx)=>idx!==i));
+  const addSectionFile = (section, e) => {
+    const files = Array.from(e.target.files||[]);
+    setSectionFiles(p=>({...p,[section]:[...p[section],...files.map(f=>({file:f,name:f.name,size:f.size}))]}));
+    e.target.value="";
+  };
+  const removeSectionFile = (section, i) => setSectionFiles(p=>({...p,[section]:p[section].filter((_,idx)=>idx!==i)}));
   const [reportText,setReportText] = useState("");
 
   // Execution state
@@ -402,11 +491,10 @@ export default function App() {
   // In edit mode we replace the displayed list entirely with loadedTests via customTests+sel.
   const allTests = useMemo(()=>{
     if(isEditMode) {
-      // Show only the loaded tests (stored in customTests with isLoaded=true)
       return customTests;
     }
-    return [...ALL_TESTS,...customTests];
-  },[customTests, isEditMode]);
+    return [...templateTests,...customTests];
+  },[customTests, isEditMode, templateTests]);
   const features = useMemo(()=>[...new Set(allTests.map(t=>t.feature))],[allTests]);
   const cmap = useMemo(()=>Object.fromEntries(features.map((f,i)=>[f,FEAT_PALETTE[i%FEAT_PALETTE.length]])),[features]);
   const filtered = useMemo(()=>allTests.filter(t=>{
@@ -425,7 +513,7 @@ export default function App() {
   },[tab]);
   useEffect(()=>{
     if(tab==="configure"){
-      setReportText(buildReport(conclusion,remarks,dutData,testMeta,chosen));
+      setReportText(buildReport(conclusion,remarks,dutData,testMeta,chosen,otaSections));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[tab, JSON.stringify(chosen.map(t=>t.key)), JSON.stringify(testMeta)]);
@@ -496,6 +584,7 @@ export default function App() {
     setSel(p=>{const n=new Set(p);ft.forEach(t=>allOn?n.delete(t.key):n.add(t.key));return n;});
   };
   const selectAll=()=>setSel(new Set(allTests.map(t=>t.key)));
+  const deselectAll=()=>setSel(new Set());
   const setMeta=(key,field,val)=>setTestMeta(p=>({...p,[key]:{...p[key],[field]:val}}));
 
   // Fetch description for a single test key
@@ -529,6 +618,10 @@ export default function App() {
   const handleAddCustomTest = (test) => {
     setCustomTests(p=>[...p,test]);
     setSel(p=>new Set([...p,test.key]));
+  };
+  const deleteCustomTest = (key) => {
+    setCustomTests(p=>p.filter(t=>t.key!==key));
+    setSel(p=>{ const n=new Set(p); n.delete(key); return n; });
   };
 
   const handleCreate=async()=>{
@@ -629,6 +722,8 @@ export default function App() {
     setIsEditMode(false);setEditExecKey("");setLoadExecInput("");setLoadExecState("idle");setLoadExecError("");
     setExecName("");setExecVer("");setExecDesc("");setConclusion("passed_remarks");
     setRemarks("");setDutData("");setLinkedIssue("");setReportText("");
+    setOtaSections({selfTestPassed:"",selfTestFailed:"",selfTestUnprovisioned:"",ota:""});
+    setSharedFiles([]);setSectionFiles({selfTestPassed:[],selfTestFailed:[],selfTestUnprovisioned:[],ota:[]});
     setPhase("idle");setLogLines([]);setResult(null);setCErr("");
     setVerifyState("idle");setVerifyMsg("");setTab("select");
   };
@@ -657,8 +752,8 @@ export default function App() {
 
   return (
     <div style={{minHeight:"100vh",background:"var(--bg)"}}>
-      {showSettings&&<SettingsModal cfg={cfg} onSave={saveCfg} onClose={()=>setShowSettings(false)}/>}
-      {showAddTest&&<AddTestModal onAdd={handleAddCustomTest} onClose={()=>setShowAddTest(false)} projectKey={cfg.projectKey}/>}
+      {showSettings&&<SettingsModal cfg={cfg} creds={creds} onSave={saveCfg} onClose={()=>setShowSettings(false)} onReloadTests={handleReloadTests}/>}
+      {showAddTest&&<AddTestModal onAdd={handleAddCustomTest} onClose={()=>setShowAddTest(false)} projectKey={cfg.projectKey} extraCategories={extraCategories} onSaveCategory={saveCategory}/>}
 
       {/* ── TOPBAR ── */}
       <div className="topbar">
@@ -702,7 +797,10 @@ export default function App() {
           {/* sidebar */}
           <div className="sidebar">
             <div className="sidebar-section">Features</div>
-            <button className="select-all-btn" onClick={selectAll}>✓ Select All ({allTests.length})</button>
+            <div style={{display:"flex",gap:6,marginBottom:4}}>
+              <button className="select-all-btn" style={{flex:1}} onClick={selectAll}>✓ Select All ({allTests.length})</button>
+              <button className="select-all-btn" style={{flex:1,opacity:sel.size===0?0.4:1}} disabled={sel.size===0} onClick={deselectAll}>✕ Deselect All</button>
+            </div>
             <div className={`feat-row ${!featF?"active":""}`} onClick={()=>setFeatF(null)}>
               <div className="feat-dot" style={{background:"var(--accent)"}}/>
               <span className="feat-name">All features</span>
@@ -774,6 +872,13 @@ export default function App() {
                         <span className="test-summary">{t.summary}</span>
                         {t.isCustom&&t.addToTemplate&&<span className="template-badge">+{cfg.templateKey}</span>}
                         <span className="feat-pill" style={{background:`${fc}15`,color:fc,borderColor:`${fc}40`}}>{t.feature}</span>
+                        {t.isCustom&&(
+                          <button
+                            title="Remove this custom test"
+                            onClick={e=>{e.stopPropagation();deleteCustomTest(t.key);}}
+                            style={{background:"none",border:"none",cursor:"pointer",color:"#dc2626",fontSize:15,padding:"2px 6px",borderRadius:4,lineHeight:1,flexShrink:0}}
+                          >✕</button>
+                        )}
                         {!t.isCustom&&(
                           <button className={`desc-toggle ${isExpanded?"open":""}`}
                             onClick={e=>{e.stopPropagation();toggleDesc(t.key);}}>
@@ -948,7 +1053,7 @@ export default function App() {
                 <div className="field-grid-2">
                   <div className="field-group">
                     <label className="field-label">General conclusion</label>
-                    <select className="field-input" value={conclusion} onChange={e=>{setConclusion(e.target.value);setReportText(buildReport(e.target.value,remarks,dutData,testMeta,chosen));}}>
+                    <select className="field-input" value={conclusion} onChange={e=>{setConclusion(e.target.value);setReportText(buildReport(e.target.value,remarks,dutData,testMeta,chosen,otaSections));}}>
                       {CONCLUSIONS.map(c=><option key={c.value} value={c.value}>{c.label}</option>)}
                     </select>
                   </div>
@@ -960,15 +1065,77 @@ export default function App() {
                 <div className="field-group">
                   <label className="field-label">Test remarks</label>
                   <textarea className="field-input field-textarea" rows={3} value={remarks}
-                    onChange={e=>{setRemarks(e.target.value);setReportText(buildReport(conclusion,e.target.value,dutData,testMeta,chosen));}}
+                    onChange={e=>{setRemarks(e.target.value);setReportText(buildReport(conclusion,e.target.value,dutData,testMeta,chosen,otaSections));}}
                     placeholder="* AP mode was enabled by following the Confluence instructions"/>
                 </div>
                 <div className="field-group">
                   <label className="field-label">DUT data <span>optional</span></label>
                   <textarea className="field-input field-textarea field-mono" rows={3} value={dutData}
-                    onChange={e=>{setDutData(e.target.value);setReportText(buildReport(conclusion,remarks,e.target.value,testMeta,chosen));}}
+                    onChange={e=>{setDutData(e.target.value);setReportText(buildReport(conclusion,remarks,e.target.value,testMeta,chosen,otaSections));}}
                     placeholder='{ "id": "shellyduobulbg3-...", "mac": "...", "ver": "..." }'/>
                 </div>
+              </div>
+            </div>
+
+            {/* OTA Self-Test Sections */}
+            <div className="card fade-in2">
+              <div className="card-header"><span className="card-title">🔬 OTA Self-Test & OTA Results</span><span style={{fontSize:12,color:"var(--text3)"}}>Included in report comment</span></div>
+              <div className="card-body" style={{display:"flex",flexDirection:"column",gap:16}}>
+                {[
+                  {key:"selfTestPassed",   label:"✅ Self-Test — Passed",        placeholder:"Notes on passed self-test scenarios…"},
+                  {key:"selfTestFailed",   label:"❌ Self-Test — Failed",         placeholder:"Notes on failed self-test scenarios…"},
+                  {key:"selfTestUnprovisioned", label:"⚠️ Self-Test — Unprovisioned", placeholder:"Notes on unprovisioned scenarios…"},
+                  {key:"ota",              label:"📦 OTA",                        placeholder:"OTA test notes…"},
+                ].map(({key,label,placeholder})=>(
+                  <div key={key} className="field-group" style={{borderLeft:"3px solid var(--border)",paddingLeft:12}}>
+                    <label className="field-label">{label}</label>
+                    <textarea className="field-input field-textarea" rows={2}
+                      value={otaSections[key]}
+                      onChange={e=>{setOta(key,e.target.value);setReportText(buildReport(conclusion,remarks,dutData,testMeta,chosen,{...otaSections,[key]:e.target.value}));}}
+                      placeholder={placeholder}/>
+                    {/* Per-section file upload */}
+                    <div style={{marginTop:6}}>
+                      <label className="btn btn-ghost btn-sm" style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:5}}>
+                        📎 Attach logs/screenshots
+                        <input type="file" multiple style={{display:"none"}} onChange={e=>addSectionFile(key,e)}/>
+                      </label>
+                      {sectionFiles[key].length>0&&(
+                        <div style={{marginTop:6,display:"flex",flexWrap:"wrap",gap:6}}>
+                          {sectionFiles[key].map((f,i)=>(
+                            <div key={i} style={{display:"flex",alignItems:"center",gap:4,background:"var(--bg2)",border:"1px solid var(--border)",borderRadius:6,padding:"3px 8px",fontSize:12}}>
+                              <span>📄 {f.name}</span>
+                              <span style={{color:"var(--text3)"}}>({(f.size/1024).toFixed(0)}KB)</span>
+                              <button onClick={()=>removeSectionFile(key,i)} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",padding:"0 2px",fontSize:13}}>✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Shared file upload */}
+            <div className="card fade-in2">
+              <div className="card-header"><span className="card-title">📎 Attachments</span><span style={{fontSize:12,color:"var(--text3)"}}>Files attached to execution ticket — note: file upload via API requires Jira attachment endpoint</span></div>
+              <div className="card-body">
+                <label className="btn btn-secondary btn-sm" style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6}}>
+                  📁 Add files (logs, screenshots…)
+                  <input type="file" multiple style={{display:"none"}} onChange={addSharedFile}/>
+                </label>
+                {sharedFiles.length>0&&(
+                  <div style={{marginTop:10,display:"flex",flexWrap:"wrap",gap:8}}>
+                    {sharedFiles.map((f,i)=>(
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:6,background:"var(--bg2)",border:"1px solid var(--border)",borderRadius:8,padding:"5px 10px",fontSize:12}}>
+                        <span>📄 {f.name}</span>
+                        <span style={{color:"var(--text3)"}}>({(f.size/1024).toFixed(0)}KB)</span>
+                        <button onClick={()=>removeSharedFile(i)} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",padding:"0 2px",fontSize:14}}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p style={{fontSize:12,color:"var(--text3)",marginTop:8}}>ℹ Files are staged here — actual upload to Jira is not yet implemented in this version.</p>
               </div>
             </div>
 
