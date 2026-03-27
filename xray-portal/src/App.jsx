@@ -120,51 +120,53 @@ function buildReport(conclusion, remarks, dutData, testMeta, chosen, otaSections
       if (!byFeature[feat]) byFeature[feat]=[];
       const meta=(testMeta||{})[t.key]||{};
       const st=statusInfo(meta.status||"not_applicable");
-      const statusStr = st.value==="passed"?"✅ PASSED"
-        : st.value==="passed_remarks"?"✅ PASSED with remarks"
-        : st.value==="failed"?"❌ FAILED"
-        : st.value==="fixed"?"🔧 FIXED"
-        : st.value==="skipped"?"⏭ SKIPPED"
+      const statusStr = st.value==="passed"        ? "PASSED"
+        : st.value==="passed_remarks" ? "PASSED with remarks"
+        : st.value==="failed"         ? "FAILED"
+        : st.value==="fixed"          ? "FIXED"
+        : st.value==="skipped"        ? "SKIPPED"
         : "N/A";
-      const reason = meta.reason ? ` | ${meta.reason}` : "";
-      byFeature[feat].push(`  ${t.summary}: ${statusStr}${reason}`);
+      const reason = meta.reason ? ` -- ${meta.reason}` : "";
+      byFeature[feat].push(`** ${t.summary}: *${statusStr}*${reason}`);
     });
-    const testSection = features.map(f=>`${f}:\n${(byFeature[f]||[]).join("\n")}`).join("\n\n");
+    const testSection = features.map(f=>`*${f}*\n${(byFeature[f]||[]).join("\n")}`).join("\n\n");
 
     const ota = otaSections || {};
-    const selfTestSection = `🔬 OTA Self-Test Results
-------------------------------------------
-✅ Passed:
+    const hasOta = ota.selfTestPassed||ota.selfTestFailed||ota.selfTestUnprovisioned||ota.ota;
+
+    const otaBlock = hasOta ? `
+h3. OTA Self-Test Results
+
+*Passed:*
 ${ota.selfTestPassed||"(no notes)"}
 
-❌ Failed:
+*Failed:*
 ${ota.selfTestFailed||"(no notes)"}
 
-⚠️ Unprovisioned:
+*Unprovisioned:*
 ${ota.selfTestUnprovisioned||"(no notes)"}
 
-📦 OTA:
-${ota.ota||"(no notes)"}`;
+*OTA:*
+${ota.ota||"(no notes)"}` : "";
 
-    return `TEST REPORT
-==========================================
+    return `h2. Test Report
 
-🧩 General Test Conclusion
+h3. General Test Conclusion
 ${conclusionLabel}
 
-📝 Test Remarks
+h3. Test Remarks
 ${remarks||"No remarks"}
 
-⚙️ Executed Tests
+h3. Executed Tests
 
 ${testSection||"(no tests selected)"}
-
-${selfTestSection}
-
-🧠 DUT Data
-${dutData||"No DUT data provided"}`;
+${otaBlock}
+h3. DUT Data
+{noformat}
+${dutData||"No DUT data provided"}
+{noformat}`;
   } catch(e) {
-    return `TEST REPORT\n==========================================\n(Error generating report: ${e.message})`;
+    return `h2. Test Report\n(Error generating report: ${e.message})`;
   }
 }
 
@@ -459,21 +461,6 @@ export default function App() {
   const [dutData,setDutData]      = useState("");
   const [linkedIssue,setLinkedIssue] = useState("");
   const [otaSections,setOtaSections] = useState({selfTestPassed:"",selfTestFailed:"",selfTestUnprovisioned:"",ota:""});
-  const [sharedFiles,setSharedFiles] = useState([]);
-  const [sectionFiles,setSectionFiles] = useState({selfTestPassed:[],selfTestFailed:[],selfTestUnprovisioned:[],ota:[]});
-  const setOta = (k,v) => setOtaSections(p=>({...p,[k]:v}));
-  const addSharedFile = (e) => {
-    const files = Array.from(e.target.files||[]);
-    setSharedFiles(p=>[...p,...files.map(f=>({file:f,name:f.name,size:f.size}))]);
-    e.target.value="";
-  };
-  const removeSharedFile = (i) => setSharedFiles(p=>p.filter((_,idx)=>idx!==i));
-  const addSectionFile = (section, e) => {
-    const files = Array.from(e.target.files||[]);
-    setSectionFiles(p=>({...p,[section]:[...p[section],...files.map(f=>({file:f,name:f.name,size:f.size}))]}));
-    e.target.value="";
-  };
-  const removeSectionFile = (section, i) => setSectionFiles(p=>({...p,[section]:p[section].filter((_,idx)=>idx!==i)}));
   const [reportText,setReportText] = useState("");
 
   // Execution state
@@ -624,41 +611,6 @@ export default function App() {
     setSel(p=>{ const n=new Set(p); n.delete(key); return n; });
   };
 
-  // Upload all files (shared + per-section) to a Jira issue
-  const uploadFiles = async (issueKey) => {
-    const allFiles = [
-      ...sharedFiles,
-      ...Object.values(sectionFiles).flat(),
-    ];
-    if(allFiles.length === 0) return;
-    addLog("log-accent", `Uploading ${allFiles.length} file(s) to ${issueKey}…`);
-    for(const f of allFiles) {
-      try {
-        const fd = new FormData();
-        fd.append("issueKey", issueKey);
-        fd.append("file", f.file, f.name);
-        const r = await fetch(
-          `${cfg.proxyUrl}/api/attachment?ngrok-skip-browser-warning=true`,
-          {
-            method: "POST",
-            headers: {
-              "x-jira-email": creds.email,
-              "x-jira-token": creds.token,
-              "ngrok-skip-browser-warning": "true",
-              "X-Atlassian-Token": "no-check",
-            },
-            body: fd,
-          }
-        );
-        const d = await r.json();
-        if(!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
-        addLog("log-ok", `  ✓ Attached: ${f.name}`);
-      } catch(e) {
-        addLog("log-warn", `  ⚠ Failed to attach ${f.name}: ${e.message}`);
-      }
-    }
-  };
-
   const handleCreate=async()=>{
     const name=execName.trim()||`[Test Execution] Bundle — ${new Date().toLocaleDateString()}`;
     const linked=linkedIssue.trim().toUpperCase();
@@ -693,8 +645,6 @@ export default function App() {
           await apiPost("/api/link",{inwardKey:linked,outwardKey:editExecKey,linkType:"Relates"},creds,cfg);
           addLog("log-ok",`✓ ${linked} relates to ${editExecKey}`);
         }
-        // Upload attachments
-        await uploadFiles(editExecKey);
         setProg(100);
         setResult({
           execKey:editExecKey,
@@ -742,8 +692,6 @@ export default function App() {
           await apiPost("/api/link",{inwardKey:linked,outwardKey:execRes.execKey,linkType:"Relates"},creds,cfg);
           addLog("log-ok",`✓ ${linked} relates to ${execRes.execKey}`);
         }
-        // Upload attachments
-        await uploadFiles(execRes.execKey);
         setProg(100);
         setResult({...execRes,issueKey:linked||null,reportText});
         setPhase("done");setTab("result");
@@ -762,7 +710,6 @@ export default function App() {
     setExecName("");setExecVer("");setExecDesc("");setConclusion("passed_remarks");
     setRemarks("");setDutData("");setLinkedIssue("");setReportText("");
     setOtaSections({selfTestPassed:"",selfTestFailed:"",selfTestUnprovisioned:"",ota:""});
-    setSharedFiles([]);setSectionFiles({selfTestPassed:[],selfTestFailed:[],selfTestUnprovisioned:[],ota:[]});
     setPhase("idle");setLogLines([]);setResult(null);setCErr("");
     setVerifyState("idle");setVerifyMsg("");setTab("select");
   };
@@ -1132,51 +1079,11 @@ export default function App() {
                       value={otaSections[key]}
                       onChange={e=>{setOta(key,e.target.value);setReportText(buildReport(conclusion,remarks,dutData,testMeta,chosen,{...otaSections,[key]:e.target.value}));}}
                       placeholder={placeholder}/>
-                    {/* Per-section file upload */}
-                    <div style={{marginTop:6}}>
-                      <label className="btn btn-ghost btn-sm" style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:5}}>
-                        📎 Attach logs/screenshots
-                        <input type="file" multiple style={{display:"none"}} onChange={e=>addSectionFile(key,e)}/>
-                      </label>
-                      {sectionFiles[key].length>0&&(
-                        <div style={{marginTop:6,display:"flex",flexWrap:"wrap",gap:6}}>
-                          {sectionFiles[key].map((f,i)=>(
-                            <div key={i} style={{display:"flex",alignItems:"center",gap:4,background:"var(--bg2)",border:"1px solid var(--border)",borderRadius:6,padding:"3px 8px",fontSize:12}}>
-                              <span>📄 {f.name}</span>
-                              <span style={{color:"var(--text3)"}}>({(f.size/1024).toFixed(0)}KB)</span>
-                              <button onClick={()=>removeSectionFile(key,i)} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",padding:"0 2px",fontSize:13}}>✕</button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Shared file upload */}
-            <div className="card fade-in2">
-              <div className="card-header"><span className="card-title">📎 Attachments</span><span style={{fontSize:12,color:"var(--text3)"}}>Files attached to execution ticket — note: file upload via API requires Jira attachment endpoint</span></div>
-              <div className="card-body">
-                <label className="btn btn-secondary btn-sm" style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6}}>
-                  📁 Add files (logs, screenshots…)
-                  <input type="file" multiple style={{display:"none"}} onChange={addSharedFile}/>
-                </label>
-                {sharedFiles.length>0&&(
-                  <div style={{marginTop:10,display:"flex",flexWrap:"wrap",gap:8}}>
-                    {sharedFiles.map((f,i)=>(
-                      <div key={i} style={{display:"flex",alignItems:"center",gap:6,background:"var(--bg2)",border:"1px solid var(--border)",borderRadius:8,padding:"5px 10px",fontSize:12}}>
-                        <span>📄 {f.name}</span>
-                        <span style={{color:"var(--text3)"}}>({(f.size/1024).toFixed(0)}KB)</span>
-                        <button onClick={()=>removeSharedFile(i)} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",padding:"0 2px",fontSize:14}}>✕</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <p style={{fontSize:12,color:"var(--text3)",marginTop:8}}>ℹ Files will be attached to the test execution ticket in Jira when you click Save/Create.</p>
-              </div>
-            </div>
 
             {/* Editable report */}
             <div className="card fade-in3">
