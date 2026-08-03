@@ -110,63 +110,70 @@ function saveStored(k,v) { try { localStorage.setItem(k,JSON.stringify(v)); } ca
 function clearStored(k)  { try { localStorage.removeItem(k); } catch{} }
 function statusInfo(val) { return TEST_STATUSES.find(s=>s.value===val)||TEST_STATUSES[0]; }
 
+// buildReport returns a structured object — converted to ADF by the server
 function buildReport(conclusion, remarks, dutData, testMeta, chosen, otaSections) {
   try {
     const conclusionLabel = CONCLUSIONS.find(c=>c.value===conclusion)?.label || conclusion;
-    const features = [...new Set((chosen||[]).map(t=>t.feature||"General"))];
-    const byFeature = {};
-    (chosen||[]).forEach(t=>{
-      const feat = t.feature || "General";
-      if (!byFeature[feat]) byFeature[feat]=[];
-      const meta=(testMeta||{})[t.key]||{};
-      const st=statusInfo(meta.status||"not_applicable");
-      const statusStr = st.value==="passed"        ? "PASSED"
-        : st.value==="passed_remarks" ? "PASSED with remarks"
-        : st.value==="failed"         ? "FAILED"
-        : st.value==="fixed"          ? "FIXED"
-        : st.value==="skipped"        ? "SKIPPED"
-        : "N/A";
-      const reason = meta.reason ? ` -- ${meta.reason}` : "";
-      byFeature[feat].push(`** ${t.summary}: *${statusStr}*${reason}`);
-    });
-    const testSection = features.map(f=>`*${f}*\n${(byFeature[f]||[]).join("\n")}`).join("\n\n");
-
-    const ota = otaSections || {};
-    const hasOta = ota.selfTestPassed||ota.selfTestFailed||ota.selfTestUnprovisioned||ota.ota;
-
-    const otaBlock = hasOta ? `
-h3. OTA Self-Test Results
-
-*Passed:*
-${ota.selfTestPassed||"(no notes)"}
-
-*Failed:*
-${ota.selfTestFailed||"(no notes)"}
-
-*Unprovisioned:*
-${ota.selfTestUnprovisioned||"(no notes)"}
-
-*OTA:*
-${ota.ota||"(no notes)"}` : "";
-
-    return `h2. Test Report
-
-h3. General Test Conclusion
-${conclusionLabel}
-
-h3. Test Remarks
-${remarks||"No remarks"}
-
-h3. Executed Tests
-
-${testSection||"(no tests selected)"}
-${otaBlock}
-h3. DUT Data
-{noformat}
-${dutData||"No DUT data provided"}
-{noformat}`;
+    const featureNames = [...new Set((chosen||[]).map(t=>t.feature||"General"))];
+    const features = featureNames.map(f => ({
+      feature: f,
+      tests: (chosen||[]).filter(t=>(t.feature||"General")===f).map(t=>{
+        const meta=(testMeta||{})[t.key]||{};
+        const st=statusInfo(meta.status||"not_applicable");
+        const statusStr = st.value==="passed"        ? "PASSED"
+          : st.value==="passed_remarks" ? "PASSED with remarks"
+          : st.value==="failed"         ? "FAILED"
+          : st.value==="fixed"          ? "FIXED"
+          : st.value==="skipped"        ? "SKIPPED"
+          : "N/A";
+        return { summary: t.summary, status: statusStr, reason: meta.reason||"" };
+      }),
+    }));
+    return {
+      conclusion: conclusionLabel,
+      remarks: remarks||"",
+      dutData: dutData||"",
+      features,
+      ota: otaSections||{},
+    };
   } catch(e) {
-    return `h2. Test Report\n(Error generating report: ${e.message})`;
+    return { conclusion:"Error", remarks: e.message, dutData:"", features:[], ota:{} };
+  }
+}
+
+// For display in the editable textarea — plain text preview
+function reportToText(r) {
+  if(!r || typeof r === "string") return r||"";
+  try {
+    const testLines = (r.features||[]).map(({feature,tests})=>
+      feature+":\n"+tests.map(t=>"  "+t.summary+": "+t.status+(t.reason?" — "+t.reason:"")).join("\n")
+    ).join("\n\n");
+    const ota = r.ota||{};
+    const otaParts = [
+      ota.selfTestPassed        && "Passed:\n"+ota.selfTestPassed,
+      ota.selfTestFailed        && "Failed:\n"+ota.selfTestFailed,
+      ota.selfTestUnprovisioned && "Unprovisioned:\n"+ota.selfTestUnprovisioned,
+      ota.ota                   && "OTA:\n"+ota.ota,
+    ].filter(Boolean).join("\n\n");
+    return [
+      "TEST REPORT",
+      "==========================================",
+      "",
+      "General Conclusion:",
+      r.conclusion||"",
+      "",
+      "Remarks:",
+      r.remarks||"No remarks",
+      "",
+      "Executed Tests:",
+      testLines||"(no tests selected)",
+      otaParts ? "\nOTA Self-Test Results:\n"+otaParts : "",
+      "",
+      "DUT Data:",
+      r.dutData||"No DUT data provided",
+    ].join("\n");
+  } catch(e) {
+    return "(error rendering report preview)";
   }
 }
 
@@ -200,14 +207,17 @@ function SettingsModal({ cfg, creds, onSave, onClose, onReloadTests }) {
     if(!form.templateKey.trim()) return;
     setReloading(true); setReloadMsg("");
     try {
-      const tempCfg = {...form};
-      const r = await fetch(`${tempCfg.proxyUrl}/api/issue/${form.templateKey.trim()}/subtasks?ngrok-skip-browser-warning=true`, {
+      const r = await fetch(`${form.proxyUrl}/api/issue/${form.templateKey.trim()}/subtasks?ngrok-skip-browser-warning=true`, {
         headers: { "x-jira-email": creds.email, "x-jira-token": creds.token, "ngrok-skip-browser-warning": "true" }
       });
       const d = await r.json();
       if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
+      // Save settings first, then reload tests
+      onSave(form);
       onReloadTests(d.tests||[], form.templateKey.trim());
       setReloadMsg(`✓ Loaded ${(d.tests||[]).length} tests from ${form.templateKey.trim()}`);
+      // Auto-close after 1 second so user can see the result
+      setTimeout(()=>onClose(), 1000);
     } catch(e) {
       setReloadMsg(`⚠ ${e.message}`);
     }
@@ -292,8 +302,10 @@ function AddTestModal({ onAdd, onClose, projectKey, extraCategories, onSaveCateg
           <div className="field-group">
             <label className="field-label">Feature / category</label>
             <select className="field-input" value={feature} onChange={e=>setFeature(e.target.value)}>
-              {allFeatures.map(f=><option key={f} value={f}>{f}</option>)}
-              <option value="__custom__">+ Custom category…</option>
+              {builtInFeatures.map(f=><option key={f} value={f}>{f}</option>)}
+              {(extraCategories||[]).length>0&&<option disabled>──── Custom ────</option>}
+              {(extraCategories||[]).map(f=><option key={"x_"+f} value={f}>{f}</option>)}
+              <option value="__custom__">+ New category…</option>
             </select>
           </div>
           {feature==="__custom__"&&(
@@ -435,8 +447,9 @@ export default function App() {
       summary: t.summary,
       feature: t.feature || "General",
     }));
-    setTemplateTests(mapped);
+    setTemplateTests(mapped.length > 0 ? mapped : ALL_TESTS);
     setSel(new Set());
+    addLog && addLog("log-ok", `✓ Loaded ${mapped.length} tests from ${templateKey}`);
   };
   // Descriptions fetched from Jira {key: string|null}
   const [descriptions,setDescriptions] = useState({});
@@ -613,7 +626,10 @@ export default function App() {
 
   const handleCreate=async()=>{
     const name=execName.trim()||`[Test Execution] Bundle — ${new Date().toLocaleDateString()}`;
-    const linked=linkedIssue.trim().toUpperCase();
+    const rawLinked=linkedIssue.trim().toUpperCase();
+    // Validate Jira key format (e.g. QAT-123, FW-456) — must have letters, dash, numbers
+    const linked = /^[A-Z][A-Z0-9]+-[0-9]+$/.test(rawLinked) ? rawLinked : "";
+    if(rawLinked && !linked) addLog("log-warn", `⚠ "${rawLinked}" is not a valid Jira key — skipping linked issue`);
     setPhase("creating");setLogLines([]);setCErr("");setProg(5);
     try{
       if(isEditMode && editExecKey) {
@@ -634,16 +650,20 @@ export default function App() {
 
         // Post fresh report comment
         addLog("log-accent",`Posting updated report to ${editExecKey}…`);
-        await apiPost("/api/comment",{issueKey:editExecKey,body:reportText},creds,cfg);
+        await apiPost("/api/comment",{issueKey:editExecKey,report:reportText},creds,cfg);
         addLog("log-ok",`✓ Report comment added to ${editExecKey}`);
         setProg(80);
 
         if(linked){
-          addLog("log-accent",`Posting report to ${linked}…`);
-          await apiPost("/api/comment",{issueKey:linked,body:`Execution ${editExecKey} was updated.\n\n${reportText}`},creds,cfg);
-          addLog("log-ok",`✓ Comment added to ${linked}`);
-          await apiPost("/api/link",{inwardKey:linked,outwardKey:editExecKey,linkType:"Relates"},creds,cfg);
-          addLog("log-ok",`✓ ${linked} relates to ${editExecKey}`);
+          try {
+            addLog("log-accent",`Posting report to ${linked}…`);
+            await apiPost("/api/comment",{issueKey:linked,report:reportText,body:`Execution ${editExecKey} was updated.`},creds,cfg);
+            addLog("log-ok",`✓ Comment added to ${linked}`);
+            await apiPost("/api/link",{inwardKey:linked,outwardKey:editExecKey,linkType:"Relates"},creds,cfg);
+            addLog("log-ok",`✓ ${linked} relates to ${editExecKey}`);
+          } catch(le) {
+            addLog("log-warn",`⚠ Could not post to ${linked}: ${le.message} — continuing`);
+          }
         }
         setProg(100);
         setResult({
@@ -679,18 +699,22 @@ export default function App() {
         setProg(40);
 
         addLog("log-accent",`Posting report comment to ${execRes.execKey}…`);
-        await apiPost("/api/comment",{issueKey:execRes.execKey,body:reportText},creds,cfg);
+        await apiPost("/api/comment",{issueKey:execRes.execKey,report:reportText},creds,cfg);
         addLog("log-ok",`✓ Comment added to ${execRes.execKey}`);
         setProg(65);
 
         if(linked){
-          addLog("log-accent",`Posting report comment to ${linked}…`);
-          await apiPost("/api/comment",{issueKey:linked,body:`Test Execution ${execRes.execKey} was created.\n\n${reportText}`},creds,cfg);
-          addLog("log-ok",`✓ Comment added to ${linked}`);
-          setProg(82);
-          addLog("log-accent",`Linking ${linked} <-> ${execRes.execKey}…`);
-          await apiPost("/api/link",{inwardKey:linked,outwardKey:execRes.execKey,linkType:"Relates"},creds,cfg);
-          addLog("log-ok",`✓ ${linked} relates to ${execRes.execKey}`);
+          try {
+            addLog("log-accent",`Posting report comment to ${linked}…`);
+            await apiPost("/api/comment",{issueKey:linked,report:reportText,body:`Test Execution ${execRes.execKey} was created.`},creds,cfg);
+            addLog("log-ok",`✓ Comment added to ${linked}`);
+            setProg(82);
+            addLog("log-accent",`Linking ${linked} <-> ${execRes.execKey}…`);
+            await apiPost("/api/link",{inwardKey:linked,outwardKey:execRes.execKey,linkType:"Relates"},creds,cfg);
+            addLog("log-ok",`✓ ${linked} relates to ${execRes.execKey}`);
+          } catch(le) {
+            addLog("log-warn",`⚠ Could not post to ${linked}: ${le.message} — execution was created successfully`);
+          }
         }
         setProg(100);
         setResult({...execRes,issueKey:linked||null,reportText});
@@ -864,6 +888,17 @@ export default function App() {
                             onClick={e=>{e.stopPropagation();deleteCustomTest(t.key);}}
                             style={{background:"none",border:"none",cursor:"pointer",color:"#dc2626",fontSize:15,padding:"2px 6px",borderRadius:4,lineHeight:1,flexShrink:0}}
                           >✕</button>
+                        )}
+                        {t.isCustom&&(
+                          <select
+                            title="Move to category"
+                            value={t.feature||"General"}
+                            onClick={e=>e.stopPropagation()}
+                            onChange={e=>{e.stopPropagation();setCustomTests(p=>p.map(c=>c.key===t.key?{...c,feature:e.target.value}:c));}}
+                            style={{fontSize:11,padding:"2px 4px",borderRadius:4,border:"1px solid var(--border)",background:"var(--bg2)",color:"var(--text1)",cursor:"pointer",maxWidth:110,flexShrink:0}}
+                          >
+                            {[...new Set([...ALL_TESTS.map(x=>x.feature),...(extraCategories||[])])].map(f=><option key={f} value={f}>{f}</option>)}
+                          </select>
                         )}
                         {!t.isCustom&&(
                           <button className={`desc-toggle ${isExpanded?"open":""}`}
@@ -1093,7 +1128,7 @@ export default function App() {
               </div>
               <div className="card-body">
                 <textarea className="field-input field-textarea field-mono" rows={18}
-                  value={reportText} onChange={e=>setReportText(e.target.value)}
+                  value={reportToText(reportText)} onChange={e=>setReportText(buildReport(conclusion,remarks,dutData,testMeta,chosen,otaSections))}
                   style={{fontSize:12,lineHeight:1.7}}/>
               </div>
             </div>
