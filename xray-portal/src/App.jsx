@@ -13,6 +13,7 @@ const SHELLY_LOGO   = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/p
 const STORAGE_CREDS = "iot_studio_creds";
 const STORAGE_CFG   = "iot_studio_config";
 const STORAGE_CATS  = "iot_studio_categories";
+const STORAGE_TESTS = "iot_studio_template_tests";
 
 // Transition IDs from "Open" state (confirmed via Jira API)
 const STATUS_TRANSITION = {
@@ -261,7 +262,7 @@ function SettingsModal({ cfg, creds, onSave, onClose, onReloadTests }) {
 }
 
 /* ── ADD CUSTOM TEST MODAL ── */
-function AddTestModal({ onAdd, onClose, projectKey, extraCategories, onSaveCategory }) {
+function AddTestModal({ onAdd, onClose, projectKey, templateKey, extraCategories, onSaveCategory }) {
   const [summary, setSummary]    = useState("");
   const [feature, setFeature]    = useState("General");
   const [addToTemplate, setAddToTemplate] = useState(false);
@@ -274,8 +275,10 @@ function AddTestModal({ onAdd, onClose, projectKey, extraCategories, onSaveCateg
   const submit = () => {
     if(!summary.trim()) return;
     const finalFeat = effectiveFeat || "General";
-    if(feature === "__custom__" && customFeat.trim() && !builtInFeatures.includes(customFeat.trim())) {
+    if(feature === "__custom__" && customFeat.trim()) {
       onSaveCategory && onSaveCategory(customFeat.trim());
+    } else if(feature !== "__custom__" && !(builtInFeatures.includes(feature))) {
+      onSaveCategory && onSaveCategory(feature);
     }
     onAdd({
       key: `CUSTOM-${Date.now()}`,
@@ -319,12 +322,12 @@ function AddTestModal({ onAdd, onClose, projectKey, extraCategories, onSaveCateg
               {addToTemplate&&<svg width="9" height="7" viewBox="0 0 9 7" fill="none"><polyline points="1,3.5 3.5,6 8,1" stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>}
             </div>
             <div>
-              <div style={{fontSize:13,fontWeight:600,color:"var(--blue-900)"}}>Add to template ({DEFAULT_CONFIG.templateKey})</div>
+              <div style={{fontSize:13,fontWeight:600,color:"var(--blue-900)"}}>Add to template ({templateKey||DEFAULT_CONFIG.templateKey})</div>
               <div style={{fontSize:12,color:"var(--text2)"}}>Also creates this test as a subtask of the template epic — it'll appear in future executions</div>
             </div>
           </div>
           {!addToTemplate&&<div className="alert alert-info" style={{padding:"8px 12px"}}>ℹ This test will only be created for this execution.</div>}
-          {addToTemplate&&<div className="alert alert-warning" style={{padding:"8px 12px"}}>⚠ This test will be added to <strong>{DEFAULT_CONFIG.templateKey}</strong> permanently.</div>}
+          {addToTemplate&&<div className="alert alert-warning" style={{padding:"8px 12px"}}>⚠ This test will be added to <strong>{templateKey||DEFAULT_CONFIG.templateKey}</strong> permanently.</div>}
         </div>
         <div className="modal-footer">
           <button className="btn btn-ghost btn-sm" onClick={onClose}>Cancel</button>
@@ -431,7 +434,7 @@ export default function App() {
   const [featF,setFeatF]       = useState(null);
   const [srch,setSrch]         = useState("");
   const [customTests,setCustomTests] = useState([]);   // user-added tests
-  const [templateTests,setTemplateTests] = useState(ALL_TESTS);  // loaded from template epic
+  const [templateTests,setTemplateTests] = useState(()=>loadStored(STORAGE_TESTS)||ALL_TESTS);
   const [extraCategories,setExtraCategories] = useState(()=>loadStored(STORAGE_CATS)||[]);
   const saveCategory = (cat) => {
     setExtraCategories(p=>{
@@ -447,7 +450,9 @@ export default function App() {
       summary: t.summary,
       feature: t.feature || "General",
     }));
-    setTemplateTests(mapped.length > 0 ? mapped : ALL_TESTS);
+    const final = mapped.length > 0 ? mapped : ALL_TESTS;
+    setTemplateTests(final);
+    saveStored(STORAGE_TESTS, final);
     setSel(new Set());
     addLog && addLog("log-ok", `✓ Loaded ${mapped.length} tests from ${templateKey}`);
   };
@@ -763,7 +768,7 @@ export default function App() {
   return (
     <div style={{minHeight:"100vh",background:"var(--bg)"}}>
       {showSettings&&<SettingsModal cfg={cfg} creds={creds} onSave={saveCfg} onClose={()=>setShowSettings(false)} onReloadTests={handleReloadTests}/>}
-      {showAddTest&&<AddTestModal onAdd={handleAddCustomTest} onClose={()=>setShowAddTest(false)} projectKey={cfg.projectKey} extraCategories={extraCategories} onSaveCategory={saveCategory}/>}
+      {showAddTest&&<AddTestModal onAdd={handleAddCustomTest} onClose={()=>setShowAddTest(false)} projectKey={cfg.projectKey} templateKey={cfg.templateKey} extraCategories={extraCategories} onSaveCategory={saveCategory}/>}
 
       {/* ── TOPBAR ── */}
       <div className="topbar">
@@ -889,17 +894,27 @@ export default function App() {
                             style={{background:"none",border:"none",cursor:"pointer",color:"#dc2626",fontSize:15,padding:"2px 6px",borderRadius:4,lineHeight:1,flexShrink:0}}
                           >✕</button>
                         )}
-                        {t.isCustom&&(
-                          <select
-                            title="Move to category"
-                            value={t.feature||"General"}
-                            onClick={e=>e.stopPropagation()}
-                            onChange={e=>{e.stopPropagation();setCustomTests(p=>p.map(c=>c.key===t.key?{...c,feature:e.target.value}:c));}}
-                            style={{fontSize:11,padding:"2px 4px",borderRadius:4,border:"1px solid var(--border)",background:"var(--bg2)",color:"var(--text1)",cursor:"pointer",maxWidth:110,flexShrink:0}}
-                          >
-                            {[...new Set([...ALL_TESTS.map(x=>x.feature),...(extraCategories||[])])].map(f=><option key={f} value={f}>{f}</option>)}
-                          </select>
-                        )}
+                        <select
+                          title="Move to category"
+                          value={t.feature||"General"}
+                          onClick={e=>e.stopPropagation()}
+                          onChange={e=>{
+                            e.stopPropagation();
+                            const newFeat = e.target.value;
+                            if(t.isCustom) {
+                              setCustomTests(p=>p.map(c=>c.key===t.key?{...c,feature:newFeat}:c));
+                            } else {
+                              setTemplateTests(p=>{
+                                const updated = p.map(tt=>tt.key===t.key?{...tt,feature:newFeat}:tt);
+                                saveStored(STORAGE_TESTS, updated);
+                                return updated;
+                              });
+                            }
+                          }}
+                          style={{fontSize:11,padding:"2px 4px",borderRadius:4,border:"1px solid var(--border)",background:"var(--bg2)",color:"var(--text1)",cursor:"pointer",maxWidth:110,flexShrink:0}}
+                        >
+                          {[...new Set([...templateTests.map(x=>x.feature),...(extraCategories||[])])].map(f=><option key={f} value={f}>{f}</option>)}
+                        </select>
                         {!t.isCustom&&(
                           <button className={`desc-toggle ${isExpanded?"open":""}`}
                             onClick={e=>{e.stopPropagation();toggleDesc(t.key);}}>
