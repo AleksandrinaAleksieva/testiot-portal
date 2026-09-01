@@ -272,11 +272,22 @@ function SettingsModal({ cfg, creds, onSave, onClose, onReloadTests, accentColor
           <div className="field-group">
             <label className="field-label">Template key</label>
             <div style={{display:"flex",gap:8}}>
-              <input className="field-input" style={{flex:1}} value={form.templateKey} onChange={e=>set("templateKey",e.target.value.toUpperCase())} placeholder="QAT-118"/>
-              <button className="btn btn-secondary btn-sm" style={{flexShrink:0}} disabled={reloading||!form.templateKey.trim()} onClick={handleReload}>
+              <select className="field-input" style={{flex:1}} value={form.templateKey} onChange={e=>set("templateKey",e.target.value)}>
+                <option value="QAT-118">QAT-118 (Default)</option>
+                <option value="QAT-234">QAT-234</option>
+                <option value="QAT-2866">QAT-2866</option>
+                <option value="__custom__">✏ Enter custom key…</option>
+              </select>
+              <button className="btn btn-secondary btn-sm" style={{flexShrink:0}} disabled={reloading||!form.templateKey.trim()||form.templateKey==="__custom__"} onClick={handleReload}>
                 {reloading?<><span className="spin spin-dark"/>Loading…</>:"🔄 Load tests"}
               </button>
             </div>
+            {form.templateKey==="__custom__"&&(
+              <input className="field-input" style={{marginTop:8}} placeholder="e.g. QAT-999"
+                onChange={e=>set("templateKey",e.target.value.toUpperCase())}
+                onBlur={e=>e.target.value&&set("templateKey",e.target.value.toUpperCase())}
+              />
+            )}
             {reloadMsg&&<p className="settings-note" style={{color:reloadMsg.startsWith("✓")?"var(--green)":"var(--red)"}}>{reloadMsg}</p>}
           </div>
           <div className="field-group"><label className="field-label">Project key</label><input className="field-input" value={form.projectKey} onChange={e=>set("projectKey",e.target.value)} placeholder="QAT"/></div>
@@ -489,7 +500,15 @@ export default function App() {
     // Filter out loaded execution tests (isLoaded) — only keep user-created ones
     return saved.filter(t=>!t.isLoaded);
   });
-  const [templateTests,setTemplateTests] = useState(()=>loadStored(STORAGE_TESTS)||ALL_TESTS);
+  const [templateTests,setTemplateTests] = useState(()=>{
+    const stored = loadStored(STORAGE_TESTS);
+    if(!stored) return ALL_TESTS;
+    // Restore feature from ALL_TESTS if available (in case stored as General)
+    return stored.map(t=>{
+      const match = ALL_TESTS.find(a=>a.key===t.key);
+      return match ? {...t, feature: match.feature} : t;
+    });
+  });
   const [extraCategories,setExtraCategories] = useState(()=>loadStored(STORAGE_CATS)||[]);
   const [accentColor,setAccentColor] = useState(()=>loadStored(STORAGE_COLOR)||"#f97316");
   // Apply accent color as CSS variable
@@ -512,11 +531,15 @@ export default function App() {
     });
   };
   const handleReloadTests = (tests, templateKey) => {
-    const mapped = tests.map(t=>({
-      key: t.key,
-      summary: t.summary,
-      feature: t.feature || "General",
-    }));
+    const mapped = tests.map(t=>{
+      // Try to restore feature from ALL_TESTS if this is a known test
+      const match = ALL_TESTS.find(a=>a.key===t.key || a.summary.toLowerCase()===t.summary.toLowerCase());
+      return {
+        key: t.key,
+        summary: t.summary,
+        feature: match?.feature || t.feature || "General",
+      };
+    });
     const final = mapped.length > 0 ? mapped : ALL_TESTS;
     setTemplateTests(final);
     saveStored(STORAGE_TESTS, final);
@@ -633,7 +656,7 @@ export default function App() {
         loadedTests.push({
           key: t.key,
           summary: t.summary,
-          feature: templateMatch?.feature || "General",
+          feature: t.feature || templateMatch?.feature || "General",
           isLoaded: true,
         });
       });
@@ -798,6 +821,7 @@ export default function App() {
           projectKey:cfg.projectKey,
           tests:chosen.map(t=>({
             key:t.key, summary:t.summary,
+            feature: t.feature||"General",
             status:testMeta[t.key]?.status||"not_applicable",
             reason:testMeta[t.key]?.reason||"",
             addToTemplate: t.addToTemplate||false,
