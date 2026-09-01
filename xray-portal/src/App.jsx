@@ -13,7 +13,10 @@ const SHELLY_LOGO   = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/p
 const STORAGE_CREDS = "iot_studio_creds";
 const STORAGE_CFG   = "iot_studio_config";
 const STORAGE_CATS  = "iot_studio_categories";
-const STORAGE_TESTS = "iot_studio_template_tests";
+const STORAGE_TESTS  = "iot_studio_template_tests";
+const STORAGE_CUSTOM  = "iot_studio_custom_tests";
+const STORAGE_RECENT  = "iot_studio_recent_executions";
+const STORAGE_COLOR   = "iot_studio_accent_color";
 
 // Transition IDs from "Open" state (confirmed via Jira API)
 const STATUS_TRANSITION = {
@@ -198,7 +201,7 @@ async function apiPost(path, body, creds, cfg) {
 }
 
 /* ── SETTINGS MODAL ── */
-function SettingsModal({ cfg, creds, onSave, onClose, onReloadTests }) {
+function SettingsModal({ cfg, creds, onSave, onClose, onReloadTests, accentColor, onColorChange }) {
   const [form, setForm] = useState({...cfg});
   const [reloading, setReloading] = useState(false);
   const [reloadMsg, setReloadMsg] = useState("");
@@ -248,6 +251,21 @@ function SettingsModal({ cfg, creds, onSave, onClose, onReloadTests }) {
           <div className="field-grid-2">
             <div className="field-group"><label className="field-label">Jira domain</label><input className="field-input" value={form.jiraDomain} onChange={e=>set("jiraDomain",e.target.value)}/></div>
             <div className="field-group"><label className="field-label">Cloud ID</label><input className="field-input" value={form.cloudId} onChange={e=>set("cloudId",e.target.value)}/></div>
+          </div>
+          <div className="field-group">
+            <label className="field-label">Accent color</label>
+            <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+              {["#f97316","#2563eb","#16a34a","#dc2626","#7c3aed","#0891b2","#db2777","#65a30d"].map(c=>(
+                <button key={c} onClick={()=>onColorChange(c)}
+                  style={{width:28,height:28,borderRadius:"50%",background:c,border:accentColor===c?"3px solid var(--text1)":"2px solid transparent",cursor:"pointer",flexShrink:0,transition:"border .15s"}}
+                />
+              ))}
+              <input type="color" value={accentColor} onChange={e=>onColorChange(e.target.value)}
+                style={{width:28,height:28,borderRadius:"50%",border:"none",cursor:"pointer",padding:0,background:"none"}}
+                title="Custom color"
+              />
+              <span style={{fontSize:12,color:"var(--text3)"}}>Custom</span>
+            </div>
           </div>
           <p className="settings-note">💾 Settings saved in your browser and persist across sessions.</p>
         </div>
@@ -433,9 +451,25 @@ export default function App() {
   const [sel,setSel]           = useState(new Set());
   const [featF,setFeatF]       = useState(null);
   const [srch,setSrch]         = useState("");
-  const [customTests,setCustomTests] = useState([]);   // user-added tests
+  const [customTests,setCustomTests] = useState(()=>{
+    const saved = loadStored(STORAGE_CUSTOM)||[];
+    // Filter out loaded execution tests (isLoaded) — only keep user-created ones
+    return saved.filter(t=>!t.isLoaded);
+  });
   const [templateTests,setTemplateTests] = useState(()=>loadStored(STORAGE_TESTS)||ALL_TESTS);
   const [extraCategories,setExtraCategories] = useState(()=>loadStored(STORAGE_CATS)||[]);
+  const [accentColor,setAccentColor] = useState(()=>loadStored(STORAGE_COLOR)||"#f97316");
+  // Apply accent color as CSS variable
+  useEffect(()=>{
+    document.documentElement.style.setProperty("--shelly", accentColor);
+    const darkened = accentColor+"cc";
+    document.documentElement.style.setProperty("--shelly-dark", accentColor);
+    document.documentElement.style.setProperty("--shelly-glow", accentColor+"26");
+  },[accentColor]);
+  const saveAccentColor = (color) => {
+    setAccentColor(color);
+    saveStored(STORAGE_COLOR, color);
+  };
   const saveCategory = (cat) => {
     setExtraCategories(p=>{
       if(p.includes(cat)) return p;
@@ -469,6 +503,7 @@ export default function App() {
   const [editExecKey,setEditExecKey]   = useState("");
   const [isEditMode,setIsEditMode]     = useState(false); // true = editing loaded execution
   const [loadExecInput,setLoadExecInput] = useState("");
+  const [recentExecs,setRecentExecs] = useState(()=>loadStored(STORAGE_RECENT)||[]);
   const [loadExecState,setLoadExecState] = useState("idle"); // idle | loading | error
   const [loadExecError,setLoadExecError] = useState("");
   const [execName,setExecName]    = useState("");
@@ -530,6 +565,13 @@ export default function App() {
     catch(e){ setVerifyState("fail");setVerifyMsg(`Connection failed — ${e.message}`); }
   };
 
+  const addRecentExec = (key) => {
+    setRecentExecs(p=>{
+      const next=[key,...p.filter(k=>k!==key)].slice(0,8);
+      saveStored(STORAGE_RECENT,next);
+      return next;
+    });
+  };
   const loadExecution = async () => {
     const key = loadExecInput.trim().toUpperCase();
     if (!key) return;
@@ -622,11 +664,19 @@ export default function App() {
   };
 
   const handleAddCustomTest = (test) => {
-    setCustomTests(p=>[...p,test]);
+    setCustomTests(p=>{
+      const next=[...p,test];
+      saveStored(STORAGE_CUSTOM, next.filter(t=>!t.isLoaded));
+      return next;
+    });
     setSel(p=>new Set([...p,test.key]));
   };
   const deleteCustomTest = (key) => {
-    setCustomTests(p=>p.filter(t=>t.key!==key));
+    setCustomTests(p=>{
+      const next=p.filter(t=>t.key!==key);
+      saveStored(STORAGE_CUSTOM, next.filter(t=>!t.isLoaded));
+      return next;
+    });
     setSel(p=>{ const n=new Set(p); n.delete(key); return n; });
   };
 
@@ -712,6 +762,16 @@ export default function App() {
         addLog("log-ok",`✓ Test Execution ${execRes.execKey} created`);
         execRes.created.forEach(c=>addLog("log-ok",`  ✓ ${c.created} <- ${c.original}`));
         execRes.failed.forEach(f=>addLog("log-warn",`  ⚠ ${f.original}: ${f.error}`));
+        // Clear custom tests that were added to template — they now live in Jira
+        const addedToTpl = chosen.filter(t=>t.isCustom && t.addToTemplate);
+        if(addedToTpl.length>0){
+          setCustomTests(p=>{
+            const next=p.filter(t=>!addedToTpl.find(a=>a.key===t.key));
+            saveStored(STORAGE_CUSTOM, next.filter(tt=>!tt.isLoaded));
+            return next;
+          });
+          addLog("log-accent",`ℹ ${addedToTpl.length} test(s) added to ${cfg.templateKey} — reload template in Settings to see them`);
+        }
         setProg(40);
 
         const freshReport = buildReport(conclusion,remarks,dutData,testMeta,chosen,otaSections);
@@ -757,7 +817,12 @@ export default function App() {
   const signOut=()=>{clearStored(STORAGE_CREDS);setCreds(null);};
   const reset=()=>{
     setSel(new Set());setFeatF(null);setSrch("");setTestMeta({});
-    setCustomTests([]);setDescriptions({});setExpandedDesc(new Set());setExpandedAnn(new Set());
+    setCustomTests(p=>{
+      // Keep non-execution custom tests (ones added to template) on reset
+      const keep = (loadStored(STORAGE_CUSTOM)||[]).filter(t=>!t.isLoaded);
+      return keep;
+    });
+    setDescriptions({});setExpandedDesc(new Set());setExpandedAnn(new Set());
     setIsEditMode(false);setEditExecKey("");setLoadExecInput("");setLoadExecState("idle");setLoadExecError("");
     setExecName("");setExecVer("");setExecDesc("");setConclusion("passed_remarks");
     setRemarks("");setDutData("");setLinkedIssue("");setReportText("");
@@ -790,7 +855,7 @@ export default function App() {
 
   return (
     <div style={{minHeight:"100vh",background:"var(--bg)"}}>
-      {showSettings&&<SettingsModal cfg={cfg} creds={creds} onSave={saveCfg} onClose={()=>setShowSettings(false)} onReloadTests={handleReloadTests}/>}
+      {showSettings&&<SettingsModal cfg={cfg} creds={creds} onSave={saveCfg} onClose={()=>setShowSettings(false)} onReloadTests={handleReloadTests} accentColor={accentColor} onColorChange={saveAccentColor}/>}
       {showAddTest&&<AddTestModal onAdd={handleAddCustomTest} onClose={()=>setShowAddTest(false)} projectKey={cfg.projectKey} templateKey={cfg.templateKey} extraCategories={extraCategories} onSaveCategory={saveCategory}/>}
 
       {/* ── TOPBAR ── */}
@@ -865,13 +930,32 @@ export default function App() {
             {/* Load existing execution banner */}
             <div className="load-exec-bar">
               <span className="load-exec-label">📂 Edit existing execution:</span>
-              <input
-                className="load-exec-input"
-                placeholder="e.g. QAT-1854"
-                value={loadExecInput}
-                onChange={e=>setLoadExecInput(e.target.value.toUpperCase())}
-                onKeyDown={e=>e.key==="Enter"&&loadExecution()}
-              />
+              {recentExecs.length>0?(
+                <select
+                  className="load-exec-input"
+                  value={loadExecInput}
+                  onChange={e=>{
+                    const v=e.target.value;
+                    if(v==="__manual__") setLoadExecInput("");
+                    else setLoadExecInput(v);
+                  }}
+                  style={{maxWidth:200}}
+                >
+                  <option value="">— Select recent —</option>
+                  {recentExecs.map(k=><option key={k} value={k}>{k}</option>)}
+                  <option value="__manual__">✏ Enter manually…</option>
+                </select>
+              ):null}
+              {(recentExecs.length===0||loadExecInput===""||!recentExecs.includes(loadExecInput))&&(
+                <input
+                  className="load-exec-input"
+                  placeholder="e.g. QAT-1854"
+                  value={recentExecs.includes(loadExecInput)?"":loadExecInput}
+                  onChange={e=>setLoadExecInput(e.target.value.toUpperCase())}
+                  onKeyDown={e=>e.key==="Enter"&&loadExecution()}
+                  style={{maxWidth:160}}
+                />
+              )}
               <button
                 className="btn btn-secondary btn-sm"
                 disabled={!loadExecInput.trim()||loadExecState==="loading"}
