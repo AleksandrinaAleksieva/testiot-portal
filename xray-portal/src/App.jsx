@@ -1112,7 +1112,7 @@ export default function App() {
                 <div className="field-grid-2">
                   <div className="field-group">
                     <label className="field-label">General conclusion</label>
-                    <select className="field-input" value={conclusion} onChange={e=>{setConclusion(e.target.value);setReportText(buildReport(e.target.value,remarks,dutData,testMeta,chosen,otaSections));}}>
+                    <select className="field-input" value={conclusion} onChange={e=>setConclusion(e.target.value)}>
                       {CONCLUSIONS.map(c=><option key={c.value} value={c.value}>{c.label}</option>)}
                     </select>
                   </div>
@@ -1124,13 +1124,13 @@ export default function App() {
                 <div className="field-group">
                   <label className="field-label">Test remarks</label>
                   <textarea className="field-input field-textarea" rows={3} value={remarks}
-                    onChange={e=>{setRemarks(e.target.value);setReportText(buildReport(conclusion,e.target.value,dutData,testMeta,chosen,otaSections));}}
+                    onChange={e=>setRemarks(e.target.value)}
                     placeholder="* AP mode was enabled by following the Confluence instructions"/>
                 </div>
                 <div className="field-group">
                   <label className="field-label">DUT data <span>optional</span></label>
                   <textarea className="field-input field-textarea field-mono" rows={3} value={dutData}
-                    onChange={e=>{setDutData(e.target.value);setReportText(buildReport(conclusion,remarks,e.target.value,testMeta,chosen,otaSections));}}
+                    onChange={e=>setDutData(e.target.value)}
                     placeholder='{ "id": "shellyduobulbg3-...", "mac": "...", "ver": "..." }'/>
                 </div>
               </div>
@@ -1150,7 +1150,7 @@ export default function App() {
                     <label className="field-label">{label}</label>
                     <textarea className="field-input field-textarea" rows={2}
                       value={otaSections[key]}
-                      onChange={e=>{setOta(key,e.target.value);setReportText(buildReport(conclusion,remarks,dutData,testMeta,chosen,{...otaSections,[key]:e.target.value}));}}
+                      onChange={e=>setOta(key,e.target.value)}
                       placeholder={placeholder}/>
                   </div>
                 ))}
@@ -1166,7 +1166,7 @@ export default function App() {
               </div>
               <div className="card-body">
                 <textarea className="field-input field-textarea field-mono" rows={18}
-                  value={reportToText(reportText)} onChange={e=>setReportText(buildReport(conclusion,remarks,dutData,testMeta,chosen,otaSections))}
+                  value={typeof reportText==="string"?reportText:reportToText(reportText)} onChange={e=>setReportText(e.target.value)}
                   style={{fontSize:12,lineHeight:1.7}}/>
               </div>
             </div>
