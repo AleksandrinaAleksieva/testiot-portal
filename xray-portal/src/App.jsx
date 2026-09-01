@@ -653,21 +653,31 @@ export default function App() {
         updateRes.failed?.forEach(f=>addLog("log-warn",`  ⚠ ${f.key}: ${f.error}`));
         setProg(60);
 
-        // Post fresh report comment
-        addLog("log-accent",`Posting updated report to ${editExecKey}…`);
-        await apiPost("/api/comment",{issueKey:editExecKey,report:reportText},creds,cfg);
-        addLog("log-ok",`✓ Report comment added to ${editExecKey}`);
+        const freshReport = buildReport(conclusion,remarks,dutData,testMeta,chosen,otaSections);
+
+        // Post comment to execution — non-fatal
+        try {
+          addLog("log-accent",`Posting updated report to ${editExecKey}…`);
+          await apiPost("/api/comment",{issueKey:editExecKey,report:freshReport,body:"Test Execution Report"},creds,cfg);
+          addLog("log-ok",`✓ Report comment added to ${editExecKey}`);
+        } catch(ce) {
+          addLog("log-warn",`⚠ Comment failed: ${ce.message} — continuing`);
+        }
         setProg(80);
 
         if(linked){
           try {
             addLog("log-accent",`Posting report to ${linked}…`);
-            await apiPost("/api/comment",{issueKey:linked,report:reportText,body:`Execution ${editExecKey} was updated.`},creds,cfg);
+            await apiPost("/api/comment",{issueKey:linked,report:freshReport,body:`Execution ${editExecKey} was updated.`},creds,cfg);
             addLog("log-ok",`✓ Comment added to ${linked}`);
+          } catch(le) {
+            addLog("log-warn",`⚠ Could not comment on ${linked}: ${le.message}`);
+          }
+          try {
             await apiPost("/api/link",{inwardKey:linked,outwardKey:editExecKey,linkType:"Relates"},creds,cfg);
             addLog("log-ok",`✓ ${linked} relates to ${editExecKey}`);
           } catch(le) {
-            addLog("log-warn",`⚠ Could not post to ${linked}: ${le.message} — continuing`);
+            addLog("log-warn",`⚠ Could not link ${linked}: ${le.message}`);
           }
         }
         setProg(100);
@@ -703,22 +713,34 @@ export default function App() {
         execRes.failed.forEach(f=>addLog("log-warn",`  ⚠ ${f.original}: ${f.error}`));
         setProg(40);
 
-        addLog("log-accent",`Posting report comment to ${execRes.execKey}…`);
-        await apiPost("/api/comment",{issueKey:execRes.execKey,report:reportText},creds,cfg);
-        addLog("log-ok",`✓ Comment added to ${execRes.execKey}`);
+        const freshReport = buildReport(conclusion,remarks,dutData,testMeta,chosen,otaSections);
+
+        // Post comment to execution — non-fatal
+        try {
+          addLog("log-accent",`Posting report comment to ${execRes.execKey}…`);
+          await apiPost("/api/comment",{issueKey:execRes.execKey,report:freshReport,body:"Test Execution Report"},creds,cfg);
+          addLog("log-ok",`✓ Comment added to ${execRes.execKey}`);
+        } catch(ce) {
+          addLog("log-warn",`⚠ Comment failed: ${ce.message} — continuing`);
+        }
         setProg(65);
 
+        // Link and comment on linked issue — each independently non-fatal
         if(linked){
           try {
             addLog("log-accent",`Posting report comment to ${linked}…`);
-            await apiPost("/api/comment",{issueKey:linked,report:reportText,body:`Test Execution ${execRes.execKey} was created.`},creds,cfg);
+            await apiPost("/api/comment",{issueKey:linked,report:freshReport,body:`Test Execution ${execRes.execKey} was created.`},creds,cfg);
             addLog("log-ok",`✓ Comment added to ${linked}`);
-            setProg(82);
+          } catch(le) {
+            addLog("log-warn",`⚠ Could not comment on ${linked}: ${le.message}`);
+          }
+          setProg(82);
+          try {
             addLog("log-accent",`Linking ${linked} <-> ${execRes.execKey}…`);
             await apiPost("/api/link",{inwardKey:linked,outwardKey:execRes.execKey,linkType:"Relates"},creds,cfg);
             addLog("log-ok",`✓ ${linked} relates to ${execRes.execKey}`);
           } catch(le) {
-            addLog("log-warn",`⚠ Could not post to ${linked}: ${le.message} — execution was created successfully`);
+            addLog("log-warn",`⚠ Could not link ${linked}: ${le.message}`);
           }
         }
         setProg(100);
