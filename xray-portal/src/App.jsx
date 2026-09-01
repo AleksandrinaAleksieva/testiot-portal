@@ -379,7 +379,7 @@ function LoginScreen({ onLogin }) {
       <div className="login-card fade-in">
         <div className="login-logo">
           <img src={SHELLY_LOGO} alt="Shelly" className="login-shelly" onError={e=>{e.target.style.display="none";}}/>
-          <span className="login-title">IoT Studio</span>
+
         </div>
         <p className="login-sub">Sign in with your Atlassian credentials. Sent directly to Jira — never stored on the server.</p>
         <div style={{display:"flex",flexDirection:"column",gap:14,marginBottom:18}}>
@@ -479,6 +479,7 @@ export default function App() {
   const [dutData,setDutData]      = useState("");
   const [linkedIssue,setLinkedIssue] = useState("");
   const [otaSections,setOtaSections] = useState({selfTestPassed:"",selfTestFailed:"",selfTestUnprovisioned:"",ota:""});
+  const setOta = (k,v) => setOtaSections(p=>({...p,[k]:v}));
   const [reportText,setReportText] = useState("");
 
   // Execution state
@@ -796,7 +797,7 @@ export default function App() {
       <div className="topbar">
         <div className="topbar-logo">
           <img src={SHELLY_LOGO} alt="Shelly" className="topbar-shelly" onError={e=>{e.target.style.display="none";}}/>
-          <span className="topbar-name">IoT Studio</span>
+
         </div>
         <div className="topbar-div"/>
         {TABS.map(t=>(
