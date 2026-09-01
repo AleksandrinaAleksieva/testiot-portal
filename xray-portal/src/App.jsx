@@ -611,7 +611,9 @@ export default function App() {
   };
   const loadExecByKey = async (key, setStateF, setErrF) => {
     if (!key) return;
-    setLoadExecState("loading"); setLoadExecError("");
+    const setState = setStateF || setLoadExecState;
+    const setErr   = setErrF   || setLoadExecError;
+    setState("loading"); setErr("");
     try {
       const data = await apiGet(`/api/execution/${key}`, creds, cfg);
       // data: { key, summary, fixVersion, tests: [{key, summary, status, reason}] }
@@ -644,17 +646,24 @@ export default function App() {
       setExecVer(data.fixVersion || "");
       setEditExecKey(key);
       setIsEditMode(true);
-      setLoadExecState("idle");
+      setState("idle");
       setLoadExecInput("");
 
       // Jump straight to Set Results
       setTab("annotate");
     } catch (e) {
-      setLoadExecState("error");
-      setLoadExecError(e.message);
+      setState("error");
+      setErr(e.message);
     }
   };
 
+
+  const handleLoadExecFromSettings = async (key, setLoadingF, setErrF, closeModal) => {
+    if(!key) return;
+    addRecentExec(key);
+    await loadExecByKey(key, setLoadingF, setErrF);
+    closeModal();
+  };
 
   const addLog=useCallback((cls,msg)=>{
     setLogLines(p=>[...p,{cls,msg}]);
