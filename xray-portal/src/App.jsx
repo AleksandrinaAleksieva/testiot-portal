@@ -201,10 +201,14 @@ async function apiPost(path, body, creds, cfg) {
 }
 
 /* ── SETTINGS MODAL ── */
-function SettingsModal({ cfg, creds, onSave, onClose, onReloadTests, accentColor, onColorChange }) {
+function SettingsModal({ cfg, creds, onSave, onClose, onReloadTests, accentColor, onColorChange, recentExecs, onLoadExec }) {
   const [form, setForm] = useState({...cfg});
   const [reloading, setReloading] = useState(false);
   const [reloadMsg, setReloadMsg] = useState("");
+  const [execInput, setExecInput] = useState("");
+  const [execLoading, setExecLoading] = useState(false);
+  const [execErr, setExecErr] = useState("");
+  const [manualExec, setManualExec] = useState(false);
   const set = (k,v)=>setForm(p=>({...p,[k]:v}));
 
   const handleReload = async () => {
@@ -236,6 +240,35 @@ function SettingsModal({ cfg, creds, onSave, onClose, onReloadTests, accentColor
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
         <div className="modal-body">
+          <div className="field-group">
+            <label className="field-label">Edit existing execution</label>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {(recentExecs&&recentExecs.length>0&&!manualExec)?(
+                <select className="field-input" style={{flex:1}} value={execInput} onChange={e=>{
+                  if(e.target.value==="__manual__"){setManualExec(true);setExecInput("");}
+                  else setExecInput(e.target.value);
+                }}>
+                  <option value="">— Select recent —</option>
+                  {recentExecs.map(k=><option key={k} value={k}>{k}</option>)}
+                  <option value="__manual__">✏ Enter manually…</option>
+                </select>
+              ):(
+                <input className="field-input" style={{flex:1}} placeholder="e.g. QAT-1854"
+                  value={execInput} onChange={e=>setExecInput(e.target.value.toUpperCase())}
+                  onKeyDown={e=>e.key==="Enter"&&execInput.trim()&&onLoadExec(execInput.trim(),setExecLoading,setExecErr,onClose)}
+                />
+              )}
+              <button className="btn btn-secondary btn-sm" style={{flexShrink:0}}
+                disabled={!execInput.trim()||execLoading}
+                onClick={()=>onLoadExec(execInput.trim(),setExecLoading,setExecErr,onClose)}>
+                {execLoading?<><span className="spin spin-dark"/>Loading…</>:"📂 Load & Edit"}
+              </button>
+            </div>
+            {manualExec&&recentExecs&&recentExecs.length>0&&(
+              <button style={{fontSize:12,color:"var(--text3)",background:"none",border:"none",cursor:"pointer",textAlign:"left",padding:"2px 0"}} onClick={()=>{setManualExec(false);setExecInput("");}}>← Back to recent</button>
+            )}
+            {execErr&&<p className="settings-note" style={{color:"var(--red)"}}>{execErr}</p>}
+          </div>
           <div className="field-group">
             <label className="field-label">Template key</label>
             <div style={{display:"flex",gap:8}}>
@@ -574,6 +607,9 @@ export default function App() {
   };
   const loadExecution = async () => {
     const key = loadExecInput.trim().toUpperCase();
+    return loadExecByKey(key, setLoadExecState, setLoadExecError);
+  };
+  const loadExecByKey = async (key, setStateF, setErrF) => {
     if (!key) return;
     setLoadExecState("loading"); setLoadExecError("");
     try {
@@ -855,7 +891,7 @@ export default function App() {
 
   return (
     <div style={{minHeight:"100vh",background:"var(--bg)"}}>
-      {showSettings&&<SettingsModal cfg={cfg} creds={creds} onSave={saveCfg} onClose={()=>setShowSettings(false)} onReloadTests={handleReloadTests} accentColor={accentColor} onColorChange={saveAccentColor}/>}
+      {showSettings&&<SettingsModal cfg={cfg} creds={creds} onSave={saveCfg} onClose={()=>setShowSettings(false)} onReloadTests={handleReloadTests} accentColor={accentColor} onColorChange={saveAccentColor} recentExecs={recentExecs} onLoadExec={handleLoadExecFromSettings}/>}
       {showAddTest&&<AddTestModal onAdd={handleAddCustomTest} onClose={()=>setShowAddTest(false)} projectKey={cfg.projectKey} templateKey={cfg.templateKey} extraCategories={extraCategories} onSaveCategory={saveCategory}/>}
 
       {/* ── TOPBAR ── */}
@@ -928,43 +964,7 @@ export default function App() {
           {/* list */}
           <div className="list-area">
             {/* Load existing execution banner */}
-            <div className="load-exec-bar">
-              <span className="load-exec-label">📂 Edit existing execution:</span>
-              {recentExecs.length>0?(
-                <select
-                  className="load-exec-input"
-                  value={loadExecInput}
-                  onChange={e=>{
-                    const v=e.target.value;
-                    if(v==="__manual__") setLoadExecInput("");
-                    else setLoadExecInput(v);
-                  }}
-                  style={{maxWidth:200}}
-                >
-                  <option value="">— Select recent —</option>
-                  {recentExecs.map(k=><option key={k} value={k}>{k}</option>)}
-                  <option value="__manual__">✏ Enter manually…</option>
-                </select>
-              ):null}
-              {(recentExecs.length===0||loadExecInput===""||!recentExecs.includes(loadExecInput))&&(
-                <input
-                  className="load-exec-input"
-                  placeholder="e.g. QAT-1854"
-                  value={recentExecs.includes(loadExecInput)?"":loadExecInput}
-                  onChange={e=>setLoadExecInput(e.target.value.toUpperCase())}
-                  onKeyDown={e=>e.key==="Enter"&&loadExecution()}
-                  style={{maxWidth:160}}
-                />
-              )}
-              <button
-                className="btn btn-secondary btn-sm"
-                disabled={!loadExecInput.trim()||loadExecState==="loading"}
-                onClick={loadExecution}
-              >
-                {loadExecState==="loading"?<><span className="spin spin-dark"/>Loading…</>:"Load & Edit"}
-              </button>
-              {loadExecState==="error"&&<span className="load-exec-err">⚠ {loadExecError}</span>}
-            </div>
+
             <div className="list-toolbar">
               <div className="search-wrap">
                 <span className="search-icon">🔍</span>
