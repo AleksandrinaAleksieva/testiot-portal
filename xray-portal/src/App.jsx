@@ -154,10 +154,8 @@ function reportToText(r) {
     ).join("\n\n");
     const ota = r.ota||{};
     const otaParts = [
-      ota.selfTestPassed        && "Passed:\n"+ota.selfTestPassed,
-      ota.selfTestFailed        && "Failed:\n"+ota.selfTestFailed,
-      ota.selfTestUnprovisioned && "Unprovisioned:\n"+ota.selfTestUnprovisioned,
-      ota.ota                   && "OTA:\n"+ota.ota,
+      ota.selfTest && "Self-Test Result:\n"+ota.selfTest,
+      ota.ota      && "OTA:\n"+ota.ota,
     ].filter(Boolean).join("\n\n");
     return [
       "TEST REPORT",
@@ -569,7 +567,7 @@ export default function App() {
   const [remarks,setRemarks]      = useState("");
   const [dutData,setDutData]      = useState("");
   const [linkedIssue,setLinkedIssue] = useState("");
-  const [otaSections,setOtaSections] = useState({selfTestPassed:"",selfTestFailed:"",selfTestUnprovisioned:"",ota:""});
+  const [otaSections,setOtaSections] = useState({selfTest:"",ota:""});
   const setOta = (k,v) => setOtaSections(p=>({...p,[k]:v}));
   const [reportText,setReportText] = useState("");
 
@@ -897,7 +895,7 @@ export default function App() {
     setIsEditMode(false);setEditExecKey("");setLoadExecInput("");setLoadExecState("idle");setLoadExecError("");
     setExecName("");setExecVer("");setExecDesc("");setConclusion("passed_remarks");
     setRemarks("");setDutData("");setLinkedIssue("");setReportText("");
-    setOtaSections({selfTestPassed:"",selfTestFailed:"",selfTestUnprovisioned:"",ota:""});
+    setOtaSections({selfTest:"",ota:""});
     setPhase("idle");setLogLines([]);setResult(null);setCErr("");
     setVerifyState("idle");setVerifyMsg("");setTab("select");
   };
@@ -1259,20 +1257,20 @@ export default function App() {
             <div className="card fade-in2">
               <div className="card-header"><span className="card-title">🔬 OTA Self-Test & OTA Results</span><span style={{fontSize:12,color:"var(--text3)"}}>Included in report comment</span></div>
               <div className="card-body" style={{display:"flex",flexDirection:"column",gap:16}}>
-                {[
-                  {key:"selfTestPassed",   label:"✅ Self-Test — Passed",        placeholder:"Notes on passed self-test scenarios…"},
-                  {key:"selfTestFailed",   label:"❌ Self-Test — Failed",         placeholder:"Notes on failed self-test scenarios…"},
-                  {key:"selfTestUnprovisioned", label:"⚠️ Self-Test — Unprovisioned", placeholder:"Notes on unprovisioned scenarios…"},
-                  {key:"ota",              label:"📦 OTA",                        placeholder:"OTA test notes…"},
-                ].map(({key,label,placeholder})=>(
-                  <div key={key} className="field-group" style={{borderLeft:"3px solid var(--border)",paddingLeft:12}}>
-                    <label className="field-label">{label}</label>
-                    <textarea className="field-input field-textarea" rows={2}
-                      value={otaSections[key]}
-                      onChange={e=>setOta(key,e.target.value)}
-                      placeholder={placeholder}/>
-                  </div>
-                ))}
+                <div className="field-group" style={{borderLeft:"3px solid var(--border)",paddingLeft:12}}>
+                  <label className="field-label">🔬 Self-Test Result</label>
+                  <textarea className="field-input field-textarea" rows={4}
+                    value={otaSections.selfTest}
+                    onChange={e=>setOta("selfTest",e.target.value)}
+                    placeholder="Passed: ... | Failed: ... | Unprovisioned: ..."/>
+                </div>
+                <div className="field-group" style={{borderLeft:"3px solid var(--border)",paddingLeft:12}}>
+                  <label className="field-label">📦 OTA</label>
+                  <textarea className="field-input field-textarea" rows={3}
+                    value={otaSections.ota}
+                    onChange={e=>setOta("ota",e.target.value)}
+                    placeholder="OTA test notes…"/>
+                </div>
               </div>
             </div>
 
@@ -1285,7 +1283,7 @@ export default function App() {
               </div>
               <div className="card-body">
                 <textarea className="field-input field-textarea field-mono" rows={18}
-                  value={typeof reportText==="string"?reportText:reportToText({...reportText,ota:otaSections})} onChange={e=>setReportText(e.target.value)}
+                  value={typeof reportText==="string"?reportText:reportToText({...reportText,dutData,ota:otaSections})} onChange={e=>setReportText(e.target.value)}
                   style={{fontSize:12,lineHeight:1.7}}/>
               </div>
             </div>
