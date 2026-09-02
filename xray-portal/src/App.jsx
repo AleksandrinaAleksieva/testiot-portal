@@ -749,6 +749,8 @@ export default function App() {
   };
 
   const handleCreate=async()=>{
+    // Auto-derive project key from template key if cfg.projectKey is empty
+    const derivedProjectKey = cfg.projectKey || cfg.templateKey.split("-")[0] || "QAT";
     const name=execName.trim()||`[Test Execution] Bundle — ${new Date().toLocaleDateString()}`;
     const rawLinked=linkedIssue.trim().toUpperCase();
     // Validate Jira key format (e.g. QAT-123, FW-456) — must have letters, dash, numbers
@@ -818,7 +820,7 @@ export default function App() {
           name,
           description: execDesc.trim()||undefined,
           fixVersion:execVer.trim()||undefined,
-          projectKey:cfg.projectKey,
+          projectKey:derivedProjectKey,
           tests:chosen.map(t=>({
             key:t.key, summary:t.summary,
             feature: t.feature||"General",
@@ -1283,7 +1285,7 @@ export default function App() {
               </div>
               <div className="card-body">
                 <textarea className="field-input field-textarea field-mono" rows={18}
-                  value={typeof reportText==="string"?reportText:reportToText(reportText)} onChange={e=>setReportText(e.target.value)}
+                  value={typeof reportText==="string"?reportText:reportToText({...reportText,ota:otaSections})} onChange={e=>setReportText(e.target.value)}
                   style={{fontSize:12,lineHeight:1.7}}/>
               </div>
             </div>
